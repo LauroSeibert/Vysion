@@ -1,0 +1,58 @@
+name: Build release
+
+# Builds Vysion.exe, the portable zip and the installer for a tag, and uploads them to that tag's release.
+# Runs when a release is published, or by hand from the Actions tab (pick the tag).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build, e.g. v0.2.0"
+        required: true
+      ref:
+        description: "Branch or commit to build from (defaults to the tag)"
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  # Release whose portable zip supplies the bundled mpv.dll
+  DLL_FROM: v0.2.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || env.TAG }}
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix nsis zip
+
+      - name: Build Vysion.exe
+        run: ./build.sh
+
+      - name: Get mpv.dll
+        run: |
+          gh release download "$DLL_FROM" -R "$GITHUB_REPOSITORY" -p '*portable*.zip' -D dl
+          unzip -j dl/*.zip '*/mpv.dll' -d build
+
+      - name: Package
+        run: |
+          VERSION="${TAG#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          makensis -DVERSION="$VERSION" installer/vysion.nsi
+          mkdir -p pkg/Vysion
+          cp build/Vysion.exe build/mpv.dll README.md pkg/Vysion/
+          (cd pkg && zip -r "../build/Vysion-$VERSION-portable-win64.zip" Vysion)
+
+      - name: Upload to release
+        run: |
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber \
+            "build/Vysion-Setup-$VERSION.exe" "build/Vysion-$VERSION-portable-win64.zip"
