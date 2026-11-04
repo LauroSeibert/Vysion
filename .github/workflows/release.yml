@@ -51,22 +51,24 @@ jobs:
         run: sh scripts/build-ffmpeg.sh
 
       - name: Test lossless cut
+        timeout-minutes: 6
         run: |
           sudo apt-get install -y wine64 ffmpeg >/dev/null
+          timeout 120 wineboot -i >/dev/null 2>&1 || true
           ffmpeg -v error -f lavfi -i testsrc2=duration=10:size=320x240:rate=30 -f lavfi -i sine=duration=10             -c:v libx264 -g 60 -c:a aac -shortest sample.mp4
           # same arguments Vysion uses: start snaps back to the keyframe at 4.0s
-          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -y -ss 5.2 -to 8.5 -i sample.mp4             -map 0 -dn -c copy -avoid_negative_ts make_zero -map_metadata 0 cut.mp4
+          WINEDEBUG=-all timeout 90 wine build/ffmpeg.exe -hide_banner -v error -nostdin -y -ss 5.2 -to 8.5 -i sample.mp4             -map 0 -dn -c copy -avoid_negative_ts make_zero -map_metadata 0 cut.mp4
           ffprobe -v error -show_entries format=duration -of csv=p=0 cut.mp4
           d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 cut.mp4)
           awk -v d="$d" 'BEGIN { exit !(d > 4.0 && d < 4.9) }'
           [ "$(ffprobe -v error -select_streams v -show_entries stream=codec_name -of csv=p=0 cut.mp4)" = h264 ]
           # keyframe probe Vysion uses to show where the cut really starts
           # (first packet's pts is negative: keyframe = 5.2 + pts, expected 4.0)
-          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -nostdin -ss 5.2 -i sample.mp4             -map 0:v:0 -c copy -frames:v 1 -avoid_negative_ts disabled -f framecrc - | tee probe.txt
+          WINEDEBUG=-all timeout 90 wine build/ffmpeg.exe -hide_banner -v error -nostdin -ss 5.2 -i sample.mp4             -map 0:v:0 -c copy -frames:v 1 -avoid_negative_ts disabled -f framecrc - | tee probe.txt
           awk -F'[ ,/]+' '/^#tb 0:/ { num = $3; den = $4 } !/^#/ && NF > 2 && !done { k = 5.2 + $3 * num / den; done = 1 }
             END { print "keyframe:", k; exit !(k > 3.99 && k < 4.01) }' probe.txt
           # a container the bundled build can't write falls back to .mkv in the app; check that works
-          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -y -ss 2 -to 6 -i sample.mp4 -map 0 -dn -c copy cut.mkv
+          WINEDEBUG=-all timeout 90 wine build/ffmpeg.exe -hide_banner -v error -nostdin -y -ss 2 -to 6 -i sample.mp4 -map 0 -dn -c copy cut.mkv
           ls -la build/ffmpeg.exe
 
       - name: Get mpv.dll
