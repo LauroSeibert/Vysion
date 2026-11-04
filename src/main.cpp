@@ -1333,7 +1333,8 @@ static void ComposeSide(const Layout& L, std::vector<uint32_t>& buf, int W, int 
     bool hov = g.hover == (dir < 0 ? H_PREV : H_NEXT);
     // flush with the screen edge: the outer corners are pushed off-bitmap, inner ones barely rounded
     REAL r = 2 * s, pw = (REAL)W, ph = (REAL)H, x = 0, y = 0;
-    FillRound(gr, SolidBrush(hov ? Color(56, 255, 255, 255) : Color(24, 255, 255, 255)), dir < 0 ? -r : 0, y, pw + r, ph, r);
+    // backdrop only while hovered; otherwise just the chevron (its shadow keeps it readable)
+    if (hov) FillRound(gr, SolidBrush(Color(56, 255, 255, 255)), dir < 0 ? -r : 0, y, pw + r, ph, r);
     Pen pen(Color(255, 255, 255, 255), 1.5f * s);
     pen.SetStartCap(LineCapRound); pen.SetEndCap(LineCapRound); pen.SetLineJoin(LineJoinRound);
     REAL cx = x + pw / 2, cy = H / 2.0f, a = 5 * s, b = 10 * s;
