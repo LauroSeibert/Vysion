@@ -39,6 +39,31 @@ jobs:
       - name: Build Vysion.exe
         run: ./build.sh
 
+      - name: Cache ffmpeg.exe
+        id: ffcache
+        uses: actions/cache@v4
+        with:
+          path: build/ffmpeg.exe
+          key: ffmpeg-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+
+      - name: Build ffmpeg.exe (stream copy only)
+        if: steps.ffcache.outputs.cache-hit != 'true'
+        run: ./scripts/build-ffmpeg.sh
+
+      - name: Test lossless cut
+        run: |
+          sudo apt-get install -y wine64 ffmpeg >/dev/null
+          ffmpeg -v error -f lavfi -i testsrc2=duration=10:size=320x240:rate=30 -f lavfi -i sine=duration=10             -c:v libx264 -g 60 -c:a aac -shortest sample.mp4
+          # same arguments Vysion uses: start snaps back to the keyframe at 4.0s
+          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -y -ss 5.2 -to 8.5 -i sample.mp4             -map 0 -dn -c copy -avoid_negative_ts make_zero -map_metadata 0 cut.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 cut.mp4
+          d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 cut.mp4)
+          awk -v d="$d" 'BEGIN { exit !(d > 4.0 && d < 4.9) }'
+          [ "$(ffprobe -v error -select_streams v -show_entries stream=codec_name -of csv=p=0 cut.mp4)" = h264 ]
+          # keyframe probe Vysion uses to show where the cut really starts
+          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -copyts -ss 5.2 -i sample.mp4             -map 0:v:0 -c copy -frames:v 1 -f framecrc - | tail -1
+          ls -la build/ffmpeg.exe
+
       - name: Get mpv.dll
         run: |
           gh release download "$DLL_FROM" -R "$GITHUB_REPOSITORY" -p '*portable*.zip' -D dl
@@ -53,7 +78,7 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           mkdir -p pkg/Vysion
-          cp build/Vysion.exe build/mpv.dll README.md pkg/Vysion/
+          cp build/Vysion.exe build/mpv.dll build/ffmpeg.exe README.md pkg/Vysion/
           (cd pkg && zip -r "../build/Vysion-$VERSION-portable-win64.zip" Vysion)
 
       - name: Keep test build
