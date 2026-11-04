@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #include "mpv/client.h"
 #include "mpv/render_gl.h"
@@ -970,6 +971,7 @@ static double TimeAtX(const Layout& L, int x) {
 // ---------------------------------------------------------------------------------------------
 using namespace Gdiplus;
 static const Color kAccent(255, 76, 160, 255);
+static const Color kTrim(255, 255, 196, 64);   // trim selection / handles
 
 static void RoundRectPath(GraphicsPath& p, REAL x, REAL y, REAL w, REAL h, REAL r) {
     r = std::min(r, std::min(w, h) / 2);
@@ -1016,7 +1018,7 @@ static const FontFamily* IconFont() {
 enum : wchar_t {
     G_PLAY = 0xE768, G_PAUSE = 0xE769, G_MUTE = 0xE74F, G_VOL0 = 0xE992, G_VOL1 = 0xE993, G_VOL2 = 0xE994, G_VOL3 = 0xE995,
     G_REPEAT_ALL = 0xE8EE, G_REPEAT_ONE = 0xE8ED, G_NEXT = 0xE893, G_ROTATE = 0xE7AD, G_FULLSCREEN = 0xE740, G_BACKTOWINDOW = 0xE73F,
-    G_CHEVRON_LEFT = 0xE76B, G_CHEVRON_RIGHT = 0xE76C,
+    G_CHEVRON_LEFT = 0xE76B, G_CHEVRON_RIGHT = 0xE76C, G_EDIT = 0xE70F,
     G_MINIMIZE = 0xE921, G_MAXIMIZE = 0xE922, G_RESTORE = 0xE923, G_CLOSE = 0xE8BB,
 };
 // Draws one glyph of size px (pixels), centred on (cx, cy) by its actual ink bounds.
@@ -1098,9 +1100,10 @@ static void DrawBottomIcons(Graphics& gr, const Layout& L, int oy) {
     const REAL gs = 16 * s;  // glyph size
 
     // play / pause
-    hoverRect(L.play, H_PLAY);
+    if (!L.hidePlay) hoverRect(L.play, H_PLAY);
     C(L.play, cx, cy);
-    if (DrawGlyph(gr, g.paused || !g.hasFile ? G_PLAY : G_PAUSE, cx, cy, 18 * s, W)) {
+    if (L.hidePlay) {
+    } else if (DrawGlyph(gr, g.paused || !g.hasFile ? G_PLAY : G_PAUSE, cx, cy, 18 * s, W)) {
     } else if (g.paused || !g.hasFile) {
         PointF pts[3] = {PointF(cx - 5 * s, cy - 8 * s), PointF(cx + 8 * s, cy), PointF(cx - 5 * s, cy + 8 * s)};
         gr.DrawPolygon(&pen, pts, 3);
@@ -1141,7 +1144,36 @@ static void DrawBottomIcons(Graphics& gr, const Layout& L, int oy) {
         gr.FillEllipse(&white, vx - r, L.volY - oy - r, r * 2, r * 2);
     }
 
-    // repeat mode
+    // trim (pen): highlighted while trimming
+    if (g.hasFile) {
+        if (g.trimMode) FillRound(gr, SolidBrush(Color(g.hover == H_TRIM ? 70 : 50, 255, 196, 64)), (REAL)L.trim.left,
+                                  (REAL)(L.trim.top - oy), (REAL)(L.trim.right - L.trim.left), (REAL)(L.trim.bottom - L.trim.top), 2 * s);
+        else hoverRect(L.trim, H_TRIM);
+        C(L.trim, cx, cy);
+        Color pc = g.trimMode ? kTrim : W;
+        if (!DrawGlyph(gr, G_EDIT, cx, cy, gs, pc)) {
+            Pen pp(pc, 1.3f * s);
+            pp.SetStartCap(LineCapRound); pp.SetEndCap(LineCapRound);
+            gr.DrawLine(&pp, cx - 6 * s, cy + 6 * s, cx + 5 * s, cy - 5 * s);
+            gr.DrawLine(&pp, cx - 7 * s, cy + 7 * s, cx - 4 * s, cy + 7 * s);
+        }
+    }
+
+    // "Save as copy"
+    if (g.trimMode) {
+        const RECT& r = L.trimSave;
+        bool hv = g.hover == H_TRIM_SAVE && !g.trimBusy;
+        Color bg = g.trimBusy ? Color(90, 255, 196, 64) : hv ? Color(255, 255, 210, 110) : kTrim;
+        REAL bx = (REAL)r.left, by = (REAL)(r.top - oy), bw = (REAL)(r.right - r.left), bh = (REAL)(r.bottom - r.top);
+        FillRound(gr, SolidBrush(bg), bx, by, bw, bh, bh / 2);
+        Font f(UiFont(), 12.5f * s, FontStyleBold, UnitPixel);
+        StringFormat c; c.SetAlignment(StringAlignmentCenter); c.SetLineAlignment(StringAlignmentCenter);
+        c.SetFormatFlags(StringFormatFlagsNoWrap);
+        const wchar_t* t = g.trimBusy ? L"Saving…" : L.trimSaveWide ? L"Save as copy" : L"Save";
+        SolidBrush ink(g.trimBusy ? Color(255, 255, 255, 255) : Color(255, 24, 24, 24));
+        gr.DrawString(t, -1, &f, RectF(bx, by, bw, bh), &c, &ink);
+    }
+
     // rotate view
     hoverRect(L.rotate, H_ROTATE);
     C(L.rotate, cx, cy);
@@ -1225,7 +1257,17 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
         REAL hx = (REAL)std::clamp(g.mouseX, L.trackL, L.trackR);
         if (hx > px) FillRound(gr, SolidBrush(Color(60, 255, 255, 255)), px, ty, hx - px, th, th / 2);
     }
-    if (px > tl) FillRound(gr, accent, tl, ty, px - tl, th, th / 2);
+    if (g.trimMode && g.duration > 0) {
+        // selection band; a fainter band shows the extra part kept because the copy starts at a keyframe
+        REAL ax = (REAL)L.trimAX, bx = (REAL)L.trimBX, bandH = 4 * s, by = L.trackY - oy - bandH / 2;
+        if (g.trimKeyA >= 0 && g.trimKeyA < g.trimA - 0.0005) {
+            REAL kx = tl + (REAL)((tr - tl) * std::clamp(g.trimKeyA / g.duration, 0.0, 1.0));
+            FillRound(gr, SolidBrush(Color(110, 255, 196, 64)), kx, by, std::max(1.0f, ax - kx), bandH, 0);
+            Pen tick(Color(200, 255, 196, 64), 1.0f * s);
+            gr.DrawLine(&tick, kx, by - 4 * s, kx, by + bandH + 4 * s);
+        }
+        if (bx > ax) FillRound(gr, SolidBrush(kTrim), ax, by, bx - ax, bandH, 0);
+    } else if (px > tl) FillRound(gr, accent, tl, ty, px - tl, th, th / 2);
     {
         REAL kr = (hovTl ? 8.0f : 7.0f) * s;
         REAL ky = L.trackY - oy;
@@ -1235,8 +1277,46 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
         gr.DrawEllipse(&ring, px - kr + 1 * s, ky - kr + 1 * s, kr * 2 - 2 * s, kr * 2 - 2 * s);
     }
 
-    // times under the two ends of the timeline
+    // trim handles with their exact times above them
     bool hours = g.duration >= 3600;
+    if (g.trimMode && g.duration > 0) {
+        REAL hw = 5 * s, hh = 24 * s, hy = L.trackY - oy - hh / 2;
+        REAL labelH = 20 * s, ly = hy - labelH - 4 * s;
+        RectF la, lbb;
+        std::wstring ta = FormatTimeMs(g.trimA, hours), tb = FormatTimeMs(g.trimB, hours);
+        gr.MeasureString(ta.c_str(), -1, &fontSmall, PointF(0, 0), &la);
+        gr.MeasureString(tb.c_str(), -1, &fontSmall, PointF(0, 0), &lbb);
+        REAL wa = la.Width + 12 * s, wb = lbb.Width + 12 * s;
+        REAL xa = std::clamp((REAL)L.trimAX - wa / 2, 2 * s, W - wa - 2 * s);
+        REAL xb = std::clamp((REAL)L.trimBX - wb / 2, 2 * s, W - wb - 2 * s);
+        if (xb < xa + wa + 4 * s) {   // keep the labels apart when the handles are close
+            REAL mid = (xa + wa + xb) / 2;
+            xa = std::max(2 * s, mid - 2 * s - wa);
+            xb = std::min(W - wb - 2 * s, mid + 2 * s);
+        }
+        auto handle = [&](int x, Hit h, REAL lx, REAL lw, const std::wstring& t) {
+            bool act = g.hover == h || g.drag == h;
+            REAL w = act ? hw + 2 * s : hw;
+            FillRound(gr, SolidBrush(Color(255, 24, 24, 24)), x - w / 2 - 1 * s, hy - 1 * s, w + 2 * s, hh + 2 * s, 2 * s);
+            FillRound(gr, SolidBrush(act ? Color(255, 255, 255, 255) : kTrim), x - w / 2, hy, w, hh, 2 * s);
+            FillRound(gr, SolidBrush(Color(act ? 235 : 200, 20, 20, 20)), lx, ly, lw, labelH, labelH / 2);
+            gr.DrawString(t.c_str(), -1, &fontSmall, RectF(lx, ly, lw, labelH), &center, act ? &white : &soft);
+        };
+        handle(L.trimAX, H_TRIM_A, xa, wa, ta);
+        handle(L.trimBX, H_TRIM_B, xb, wb, tb);
+
+        // length of the copy, and where it really starts if that's earlier
+        double start = g.trimKeyA >= 0 ? g.trimKeyA : g.trimA;
+        wchar_t info[160];
+        if (g.trimKeyA >= 0 && g.trimKeyA < g.trimA - 0.0005)
+            swprintf(info, 160, L"%.3f s · starts at keyframe %ls", g.trimB - start, FormatTimeMs(start, hours).c_str());
+        else
+            swprintf(info, 160, L"%.3f s", g.trimB - start);
+        REAL y = (REAL)(L.trackY - oy) + 9 * s;
+        gr.DrawString(info, -1, &fontSmall, RectF(tl + 90 * s, y, std::max(0.0f, tr - tl - 180 * s), 16 * s), &center, &soft);
+    }
+
+    // times under the two ends of the timeline
     {
         REAL y = (REAL)(L.trackY - oy) + 9 * s, hgt = 16 * s;
         std::wstring a = FormatTime(cur, hours), b = FormatTime(g.duration, hours);
@@ -1479,7 +1559,7 @@ static void UpdateVisibility() {
     bool flashing = (LONG)(g.flashUntil - GetTickCount()) > 0;
 
     bool ended = AtEnd() && g.repeat != REPEAT_ONE;   // finished and not looping: keep the timeline up
-    bool bottom = !g.hasFile || ended || g.drag != H_NONE || flashing || !g.toast.empty() ||
+    bool bottom = !g.hasFile || ended || g.drag != H_NONE || flashing || !g.toast.empty() || g.trimMode ||
                   (nearBottom && g.recentActivity) || (nearBottom && BottomActiveHit(raw));
     bool sides = g.hasFile && in && (g.recentActivity || raw == H_PREV || raw == H_NEXT);
     bool top = !g.fullscreen || (in && In(L.topBox, g.mouseX, g.mouseY)) || g.pressed != H_NONE;
@@ -1532,6 +1612,7 @@ static void OpenFile(const std::wstring& pathIn) {
     }
     g.file = path;
     g.eofHandled = false;
+    if (!g.trimBusy) { g.trimMode = false; g.trimProbeGen++; }
     if (g.rotate) { g.rotate = 0; Cmd({"set", "video-rotate", "0"}); }
     g.eof = false;
     FlashBottom(2000);
@@ -1741,6 +1822,169 @@ static void SnapshotExplorerOrder() {
     if (ExplorerOrder(folder, g.file, v)) gOrder.swap(v);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Trimming: a bundled ffmpeg.exe (stream copy only) cuts without re-encoding. That can only start
+// at a keyframe, so the start snaps back to the keyframe at or before the chosen time; the timeline
+// shows that. Runs on worker threads; results come back as WM_APP_TRIM.
+// ---------------------------------------------------------------------------------------------
+struct TrimResult {
+    int kind = 0;           // 1 = keyframe found, 2 = save finished
+    int gen = 0;
+    double keyA = -1;
+    bool ok = false;
+    std::wstring path;      // saved copy
+};
+static std::wstring ExeDir() {
+    wchar_t exe[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring d = exe;
+    return d.substr(0, d.find_last_of(L"\\/") + 1);
+}
+static std::wstring FfmpegPath() { return ExeDir() + L"ffmpeg.exe"; }
+// Runs a command line without a console window; returns the exit code (-1 if it couldn't start).
+static int RunHidden(const std::wstring& cmdline, std::string* out) {
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) return -1;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr; si.hStdError = wr;
+    si.hStdInput = nullptr;
+    PROCESS_INFORMATION pi{};
+    std::wstring cl = cmdline;
+    BOOL started = CreateProcessW(nullptr, &cl[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+                                  nullptr, nullptr, &si, &pi);
+    CloseHandle(wr);
+    if (!started) { CloseHandle(rd); return -1; }
+    char buf[4096];
+    DWORD n;
+    while (ReadFile(rd, buf, sizeof buf, &n, nullptr) && n)
+        if (out && out->size() < (1u << 20)) out->append(buf, n);
+    CloseHandle(rd);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    return (int)code;
+}
+static std::wstring Secs(double t) { wchar_t b[32]; swprintf(b, 32, L"%.3f", std::max(0.0, t)); return b; }
+
+// Where will a copy starting at `a` really begin? Asks ffmpeg for the first video packet it would copy:
+// its timestamp is relative to `a` (zero or negative), so keyframe = a + pts.
+static void ProbeKeyframe(double a) {
+    int gen = ++g.trimProbeGen;
+    if (a <= 0.0005) { g.trimKeyA = 0; return; }
+    g.trimKeyA = -1;
+    std::wstring file = g.file, ff = FfmpegPath();
+    HWND hwnd = g.hwnd;
+    std::thread([=] {
+        std::string out;
+        int rc = RunHidden(L"\"" + ff + L"\" -hide_banner -v error -nostdin -ss " + Secs(a) + L" -i \"" + file +
+                           L"\" -map 0:v:0 -c copy -frames:v 1 -avoid_negative_ts disabled -f framecrc -", &out);
+        auto* r = new TrimResult;
+        r->kind = 1; r->gen = gen; r->keyA = a;   // no video / no answer: the cut starts where asked
+        long long num = 0, den = 0;
+        const char* tb = strstr(out.c_str(), "#tb 0:");
+        if (rc == 0 && tb && sscanf(tb, "#tb 0: %lld/%lld", &num, &den) == 2 && num > 0 && den > 0) {
+            size_t pos = 0;
+            while (pos < out.size()) {   // first packet line: "0, dts, pts, duration, size, crc"
+                size_t e = out.find('\n', pos);
+                std::string line = out.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
+                pos = e == std::string::npos ? out.size() : e + 1;
+                long long dts = 0, pts = 0;
+                int idx = 0;
+                if (!line.empty() && line[0] != '#' && sscanf(line.c_str(), "%d, %lld, %lld", &idx, &dts, &pts) == 3) {
+                    double off = (double)pts * num / den;
+                    if (off <= 0.0005 && off > -600) r->keyA = std::max(0.0, a + off);
+                    break;
+                }
+            }
+        }
+        if (!PostMessageW(hwnd, WM_APP_TRIM, 0, (LPARAM)r)) delete r;
+    }).detach();
+}
+static void SetTrimMode(bool on) {
+    if (on && (!g.hasFile || g.duration <= 0)) return;
+    if (on == g.trimMode) return;
+    if (on && GetFileAttributesW(FfmpegPath().c_str()) == INVALID_FILE_ATTRIBUTES) {
+        ShowToast(L"Trimming needs ffmpeg.exe next to Vysion.exe");
+        return;
+    }
+    g.trimMode = on;
+    if (on) {
+        g.trimA = 0; g.trimB = g.duration;
+        ProbeKeyframe(g.trimA);
+        ShowToast(L"Drag the yellow handles, or press I / O at the playhead", ComputeLayout().trim.left);
+    } else {
+        g.trimProbeGen++;
+    }
+    ComposeOverlay();
+    UpdateVisibility();
+}
+static void SetTrimPoint(bool start, double t) {
+    if (!g.trimMode) return;
+    const double minLen = 0.05;
+    t = std::clamp(t, 0.0, g.duration);
+    if (start) {
+        g.trimA = std::min(t, std::max(0.0, g.trimB - minLen));
+        ProbeKeyframe(g.trimA);
+    } else {
+        g.trimB = std::max(t, std::min(g.duration, g.trimA + minLen));
+    }
+    ComposeOverlay();
+}
+// "name (trim).ext", or "name (trim 2).ext" ... if taken
+static std::wstring TrimOutputPath(const std::wstring& in) {
+    size_t slash = in.find_last_of(L"\\/");
+    size_t dot = in.find_last_of(L'.');
+    if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash)) dot = in.size();
+    std::wstring base = in.substr(0, dot), ext = in.substr(dot);
+    for (int i = 1; i < 1000; i++) {
+        std::wstring p = base + (i == 1 ? std::wstring(L" (trim)") : L" (trim " + std::to_wstring(i) + L")") + ext;
+        if (GetFileAttributesW(p.c_str()) == INVALID_FILE_ATTRIBUTES) return p;
+    }
+    return base + L" (trim copy)" + ext;
+}
+static void SaveTrimmedCopy() {
+    if (!g.trimMode || g.trimBusy || g.file.empty()) return;
+    g.trimBusy = true;
+    std::wstring in = g.file, out = TrimOutputPath(in), ff = FfmpegPath();
+    double a = g.trimA, b = g.trimB;
+    bool whole = b >= g.duration - 0.0005;
+    HWND hwnd = g.hwnd;
+    std::thread([=] {
+        std::wstring head = L"\"" + ff + L"\" -hide_banner -v error -nostdin -y" + (a > 0.0005 ? L" -ss " + Secs(a) : L"") +
+                            (whole ? L"" : L" -to " + Secs(b)) + L" -i \"" + in + L"\"";
+        std::wstring tail = L" -c copy -avoid_negative_ts make_zero -map_metadata 0 \"" + out + L"\"";
+        // everything first (subtitles too); if the container refuses a stream, just video + audio
+        int rc = RunHidden(head + L" -map 0 -dn" + tail, nullptr);
+        if (rc != 0) rc = RunHidden(head + L" -map 0:v? -map 0:a?" + tail, nullptr);
+        auto* r = new TrimResult;
+        r->kind = 2; r->ok = rc == 0; r->path = out;
+        if (!r->ok) DeleteFileW(out.c_str());
+        if (!PostMessageW(hwnd, WM_APP_TRIM, 0, (LPARAM)r)) delete r;
+    }).detach();
+    ComposeOverlay();
+}
+static void OnTrimResult(TrimResult* r) {
+    if (r->kind == 1) {
+        if (r->gen == g.trimProbeGen && g.trimMode) { g.trimKeyA = r->keyA; ComposeOverlay(); }
+    } else if (r->kind == 2) {
+        g.trimBusy = false;
+        if (r->ok) {
+            g.trimMode = false;
+            ShowToast(L"Saved " + std::wstring(PathFindFileNameW(r->path.c_str())));
+        } else {
+            ShowToast(L"Couldn't save the trimmed copy");
+        }
+        ComposeOverlay();
+        UpdateVisibility();
+    }
+    delete r;
+}
+
 // Next/previous video, in the order Explorer shows the folder (falls back to name order).
 static bool OpenSibling(int dir, bool wrap) {
     if (g.file.empty()) return false;
@@ -1898,6 +2142,13 @@ static void OnMouseMove(int x, int y) {
     } else if (g.drag == H_VOLUME) {
         double f = std::clamp((double)(x - L.volL) / std::max(1, L.volR - L.volL), 0.0, 1.0);
         SetVolume(f * 100);
+    } else if (g.drag == H_TRIM_A || g.drag == H_TRIM_B) {
+        double t = TimeAtX(L, x);
+        bool start = g.drag == H_TRIM_A;
+        if (start) { g.trimA = std::clamp(t, 0.0, std::max(0.0, g.trimB - 0.05)); g.trimKeyA = -1; }
+        else g.trimB = std::clamp(t, std::min(g.duration, g.trimA + 0.05), g.duration);
+        DWORD now = GetTickCount();   // show the frame under the handle
+        if (now - g.lastSeekTick > 60) { SeekAbs(start ? g.trimA : g.trimB, true); g.lastSeekTick = now; }
     }
     UpdateHoverPreview(L);
     if (moved || old != g.hover) ComposeOverlay();
@@ -1915,6 +2166,13 @@ static void OnLButtonDown(int x, int y) {
     case H_REPEAT: CycleRepeat(); break;
     case H_ROTATE: SetRotation(g.rotate + 90); break;
     case H_FULLSCREEN: ToggleFullscreen(); break;
+    case H_TRIM: SetTrimMode(!g.trimMode); break;
+    case H_TRIM_SAVE: SaveTrimmedCopy(); break;
+    case H_TRIM_A: case H_TRIM_B:
+        g.drag = h;
+        SetCapture(g.hwnd);
+        if (!g.paused) TogglePause();   // hold still while picking the frame
+        break;
     case H_MIN: case H_MAX: case H_CLOSE: case H_EXITFS:
         g.pressed = h;
         SetCapture(g.hwnd);
@@ -1965,6 +2223,11 @@ static void OnLButtonUp(int x, int y) {
         g.timePos = g.dragTime;
         SeekAbs(g.dragTime, true);
     }
+    if (g.drag == H_TRIM_A || g.drag == H_TRIM_B) {
+        bool start = g.drag == H_TRIM_A;
+        SetTrimPoint(start, start ? g.trimA : g.trimB);
+        SeekAbs(start ? g.trimA : g.trimB, true);
+    }
     if (g.drag != H_NONE) {
         g.drag = H_NONE;
         ReleaseCapture();
@@ -1990,6 +2253,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_NEXT: OpenSibling(+1, false); return 0;
     case WM_APP_SNAPSHOT: SnapshotExplorerOrder(); return 0;
     case WM_APP_REGISTER: RegisterFileTypeLook(); return 0;
+    case WM_APP_TRIM: OnTrimResult((TrimResult*)lp); return 0;
     case WM_APP_THUMB:
         if (IsTl(g.hover) || g.drag == H_TIMELINE) {
             Layout L = ComputeLayout();
@@ -2024,7 +2288,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) {
-            SetCursor(g.cursorHidden ? nullptr : LoadCursor(nullptr, IDC_ARROW));
+            bool sizer = g.hover == H_TRIM_A || g.hover == H_TRIM_B || g.drag == H_TRIM_A || g.drag == H_TRIM_B;
+            SetCursor(g.cursorHidden ? nullptr : LoadCursor(nullptr, sizer ? IDC_SIZEWE : IDC_ARROW));
             return TRUE;
         }
         break;
@@ -2134,13 +2399,22 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case 'F': case VK_F11: ToggleFullscreen(); break;
         case VK_RETURN: if (msg == WM_SYSKEYDOWN || !ctrl) ToggleFullscreen(); break;
-        case VK_ESCAPE: if (g.fullscreen) ToggleFullscreen(); break;
+        case VK_ESCAPE:
+            if (g.trimMode) SetTrimMode(false);
+            else if (g.fullscreen) ToggleFullscreen();
+            break;
+        case 'E': if (ctrl) SetTrimMode(!g.trimMode); break;
+        case 'I': if (g.trimMode) SetTrimPoint(true, g.timePos); break;   // start at the playhead
+        case 'S': if (ctrl) SaveTrimmedCopy(); break;
         case VK_NEXT: case 'N': OpenSibling(+1, true); break;
         case VK_PRIOR: case 'P': OpenSibling(-1, true); break;
         case VK_HOME: SeekAbs(0, true); break;
         case VK_OEM_PERIOD: Cmd({"frame-step"}); break;
         case VK_OEM_COMMA: Cmd({"frame-back-step"}); break;
-        case 'O': if (ctrl) ShowOpenDialog(); break;
+        case 'O':
+            if (ctrl) ShowOpenDialog();
+            else SetTrimPoint(false, g.timePos);   // trim end at the playhead
+            break;
         case 'W': if (ctrl) PostMessageW(h, WM_CLOSE, 0, 0); break;
         case VK_F4: if (msg == WM_SYSKEYDOWN) PostMessageW(h, WM_CLOSE, 0, 0); break;
         default:

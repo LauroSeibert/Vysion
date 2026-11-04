@@ -17,7 +17,7 @@ PARSE=h264,hevc,av1,vp8,vp9,mpeg4video,mpegvideo,vc1,mjpeg,aac,aac_latm,ac3,mpeg
 BSF=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,vp9_superframe,vp9_superframe_split,extract_extradata,av1_frame_merge,av1_frame_split,mpeg4_unpack_bframes,setts,null
 
 ./configure --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32- \
-  --pkg-config=false --enable-static --disable-shared --enable-small \
+  --pkg-config=false --disable-x86asm --enable-static --disable-shared --enable-small \
   --disable-everything --disable-autodetect --disable-network --disable-doc \
   --disable-ffplay --disable-ffprobe --disable-avdevice --disable-swscale --disable-postproc \
   --enable-protocol=file,pipe \

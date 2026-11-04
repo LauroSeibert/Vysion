@@ -1,5 +1,5 @@
 ; Vysion installer (NSIS). Per-user install, no admin prompt.
-; Build:  makensis -DVERSION=0.2.1 installer/vysion.nsi   (expects build/Vysion.exe and build/mpv.dll)
+; Build:  makensis -DVERSION=0.2.1 installer/vysion.nsi   (expects build/Vysion.exe, build/mpv.dll, build/ffmpeg.exe)
 
 Unicode true
 !include "MUI2.nsh"
@@ -169,6 +169,7 @@ FunctionEnd
 Section "Uninstall"
   Delete "$INSTDIR\Vysion.exe"
   Delete "$INSTDIR\mpv.dll"
+  Delete "$INSTDIRfmpeg.exe"
   Delete "$INSTDIR\libmpv-2.dll"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\Uninstall.exe"

@@ -36,6 +36,10 @@ no runtime and no background services.
 - **Rotate the view** (button, or `Ctrl+R` / `Ctrl+Shift+R`): turn a sideways 9:16 clip into 16:9 instantly.
   It rotates on the GPU while drawing, with no re-encoding, and the file is never touched. The previews rotate
   too, and rotation resets for the next video.
+- **Trim without re-encoding** (pen button, or `Ctrl+E`): drag the two yellow handles, or press `I` / `O`
+  to set the start / end at the current frame, then **Save as copy**. The copy is written next to the
+  original as `name (trim).ext` in about a second, with no quality loss. A lossless cut has to start on a
+  keyframe, so the start snaps back to the nearest keyframe before it; the timeline shows where that is.
 - **Three repeat modes** (one button, or `R`): don't repeat, repeat this video, or play the next video
   automatically.
 - **Remembers your settings:** volume, mute, repeat mode and window size and position.
@@ -58,6 +62,9 @@ no runtime and no background services.
 | Ctrl+R / Ctrl+Shift+R | Rotate view clockwise / counter-clockwise |
 | N / P, PageDown / PageUp, mouse side buttons | Next / previous video in the folder |
 | , / . | Previous / next frame |
+| Ctrl+E | Trim mode on / off (Esc to leave) |
+| I / O | Trim start / end at the current frame (in trim mode) |
+| Ctrl+S | Save the trimmed copy (in trim mode) |
 | Ctrl+O / Ctrl+W | Open / close |
 
 ## Stack
@@ -70,6 +77,7 @@ no runtime and no background services.
 | Video rendering | OpenGL (WGL) through the libmpv render API, on a dedicated render thread |
 | Timeline previews | A second libmpv instance rendering into an offscreen OpenGL framebuffer on its own thread |
 | UI overlay | GDI+ drawn into premultiplied-alpha layers, uploaded as GL textures and blended over the video |
+| Trimming | A tiny bundled `ffmpeg.exe` built with stream copy only (no codecs), run in the background |
 | Explorer sort order | Shell COM APIs (`IShellWindows`, `IFolderView`) |
 | Settings | INI file in `%APPDATA%\Vysion` |
 | Build | MinGW-w64 (cross-compiled from Linux, or MSYS2 on Windows) |
@@ -97,7 +105,7 @@ The installer isn't code-signed, so SmartScreen may show "Windows protected your
 click **More info > Run anyway**.
 
 If you'd rather not install anything, there's also a portable zip: extract it anywhere and run `Vysion.exe`,
-keeping the mpv DLL next to it.
+keeping the mpv DLL and `ffmpeg.exe` next to it.
 
 For the newest codecs, you can replace the bundled DLL with a current `libmpv-2.dll` from
 [shinchiro's mpv builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases). Vysion loads
@@ -108,10 +116,12 @@ For the newest codecs, you can replace the bundled DLL with a current `libmpv-2.
 - **Linux (cross-compile):** install `g++-mingw-w64-x86-64-posix`, then run `./build.sh`
 - **Windows:** in an MSYS2 UCRT64 shell with gcc, run `build.bat`
 
-Then put a libmpv DLL next to `build/Vysion.exe`. To build the installer, run
+Then put a libmpv DLL next to `build/Vysion.exe`. For trimming, `sh scripts/build-ffmpeg.sh` (Linux, needs
+`g++-mingw-w64-x86-64-posix`) builds the small stream-copy `build/ffmpeg.exe`; a regular ffmpeg.exe works too. To build the installer, run
 `makensis -DVERSION=0.2.1 installer/vysion.nsi` (NSIS 3), which writes `build/Vysion-Setup-0.2.1.exe`.
 
 ## License note
 
 libmpv and FFmpeg are licensed under the (L)GPL. Vysion loads the DLL at runtime. Release zips that include
-the DLL point to its source at https://github.com/mpv-player/mpv.
+the DLL point to its source at https://github.com/mpv-player/mpv. The bundled `ffmpeg.exe` is an LGPL build
+of FFmpeg 7.1 (https://ffmpeg.org); `scripts/build-ffmpeg.sh` shows exactly how it's configured.
