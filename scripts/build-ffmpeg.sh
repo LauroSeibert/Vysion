@@ -12,8 +12,10 @@ fi
 cd "build/ffmpeg-src/ffmpeg-$VER"
 
 DEMUX=mov,matroska,avi,mpegts,mpegps,flv,asf,ogg,mxf,h264,hevc,aac,mp3,ac3,wav,flac
-MUX=mp4,mov,ipod,3gp,3g2,f4v,matroska,webm,avi,mpegts,mpeg,vob,flv,asf,ogg,ogv,mxf,mp3,adts,ac3,wav,flac,framecrc,null
+MUX=mp4,mov,ipod,tgp,tg2,f4v,matroska,webm,avi,mpegts,mpeg1system,mpeg2vob,flv,asf,ogg,ogv,mxf,mp3,adts,ac3,wav,flac,framecrc,null
 PARSE=h264,hevc,av1,vp8,vp9,mpeg4video,mpegvideo,vc1,mjpeg,aac,aac_latm,ac3,mpegaudio,opus,vorbis,flac,dca
+# audio decoders only help ffmpeg read stream details (sample rate etc.) while probing; nothing is re-encoded
+DEC=aac,aac_latm,ac3,eac3,mp3float,mp2float,opus,vorbis,flac
 BSF=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,vp9_superframe,vp9_superframe_split,extract_extradata,av1_frame_merge,av1_frame_split,mpeg4_unpack_bframes,setts,null
 
 ./configure --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32- \
@@ -21,7 +23,7 @@ BSF=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,vp9_superframe,vp9_superfram
   --disable-everything --disable-autodetect --disable-network --disable-doc \
   --disable-ffplay --disable-ffprobe --disable-avdevice --disable-swscale --disable-postproc \
   --enable-protocol=file,pipe \
-  --enable-demuxer=$DEMUX --enable-muxer=$MUX --enable-parser=$PARSE --enable-bsf=$BSF \
+  --enable-demuxer=$DEMUX --enable-muxer=$MUX --enable-parser=$PARSE --enable-bsf=$BSF --enable-decoder=$DEC \
   --extra-ldflags="-static -static-libgcc"
 make -j"$(nproc)" ffmpeg.exe
 x86_64-w64-mingw32-strip ffmpeg.exe
