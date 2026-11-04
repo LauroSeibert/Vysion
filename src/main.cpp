@@ -1916,7 +1916,7 @@ static void SetTrimMode(bool on) {
     if (on) {
         g.trimA = 0; g.trimB = g.duration;
         ProbeKeyframe(g.trimA);
-        ShowToast(L"Drag the yellow handles, or press I / O at the playhead", ComputeLayout().trim.left);
+        ShowToast(L"Drag the yellow handles, or press I / O at the playhead");
     } else {
         g.trimProbeGen++;
     }
@@ -1936,11 +1936,11 @@ static void SetTrimPoint(bool start, double t) {
     ComposeOverlay();
 }
 // "name (trim).ext", or "name (trim 2).ext" ... if taken
-static std::wstring TrimOutputPath(const std::wstring& in) {
+static std::wstring TrimOutputPath(const std::wstring& in, const wchar_t* forceExt = nullptr) {
     size_t slash = in.find_last_of(L"\\/");
     size_t dot = in.find_last_of(L'.');
     if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash)) dot = in.size();
-    std::wstring base = in.substr(0, dot), ext = in.substr(dot);
+    std::wstring base = in.substr(0, dot), ext = forceExt ? std::wstring(forceExt) : in.substr(dot);
     for (int i = 1; i < 1000; i++) {
         std::wstring p = base + (i == 1 ? std::wstring(L" (trim)") : L" (trim " + std::to_wstring(i) + L")") + ext;
         if (GetFileAttributesW(p.c_str()) == INVALID_FILE_ATTRIBUTES) return p;
@@ -1950,20 +1950,27 @@ static std::wstring TrimOutputPath(const std::wstring& in) {
 static void SaveTrimmedCopy() {
     if (!g.trimMode || g.trimBusy || g.file.empty()) return;
     g.trimBusy = true;
-    std::wstring in = g.file, out = TrimOutputPath(in), ff = FfmpegPath();
+    std::wstring in = g.file, out = TrimOutputPath(in), mkv = TrimOutputPath(in, L".mkv"), ff = FfmpegPath();
     double a = g.trimA, b = g.trimB;
     bool whole = b >= g.duration - 0.0005;
     HWND hwnd = g.hwnd;
     std::thread([=] {
         std::wstring head = L"\"" + ff + L"\" -hide_banner -v error -nostdin -y" + (a > 0.0005 ? L" -ss " + Secs(a) : L"") +
                             (whole ? L"" : L" -to " + Secs(b)) + L" -i \"" + in + L"\"";
-        std::wstring tail = L" -c copy -avoid_negative_ts make_zero -map_metadata 0 \"" + out + L"\"";
-        // everything first (subtitles too); if the container refuses a stream, just video + audio
-        int rc = RunHidden(head + L" -map 0 -dn" + tail, nullptr);
-        if (rc != 0) rc = RunHidden(head + L" -map 0:v? -map 0:a?" + tail, nullptr);
+        auto tail = [](const std::wstring& o) { return L" -c copy -avoid_negative_ts make_zero -map_metadata 0 \"" + o + L"\""; };
+        // everything first (subtitles too); if the container refuses a stream, just video + audio;
+        // if this format can't be written at all, Matroska takes almost anything
+        std::wstring path = out;
+        int rc = RunHidden(head + L" -map 0 -dn" + tail(out), nullptr);
+        if (rc != 0) rc = RunHidden(head + L" -map 0:v? -map 0:a?" + tail(out), nullptr);
+        if (rc != 0) {
+            DeleteFileW(out.c_str());
+            path = mkv;
+            rc = RunHidden(head + L" -map 0 -dn" + tail(mkv), nullptr);
+        }
         auto* r = new TrimResult;
-        r->kind = 2; r->ok = rc == 0; r->path = out;
-        if (!r->ok) DeleteFileW(out.c_str());
+        r->kind = 2; r->ok = rc == 0; r->path = path;
+        if (!r->ok) DeleteFileW(path.c_str());
         if (!PostMessageW(hwnd, WM_APP_TRIM, 0, (LPARAM)r)) delete r;
     }).detach();
     ComposeOverlay();

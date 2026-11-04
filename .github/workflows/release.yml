@@ -63,6 +63,10 @@ jobs:
           # keyframe probe Vysion uses to show where the cut really starts
           # (first packet's pts is negative: keyframe = 5.2 + pts, expected 4.0)
           WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -nostdin -ss 5.2 -i sample.mp4             -map 0:v:0 -c copy -frames:v 1 -avoid_negative_ts disabled -f framecrc - | tee probe.txt
+          awk -F'[ ,/]+' '/^#tb 0:/ { num = $3; den = $4 } !/^#/ && NF > 2 && !done { k = 5.2 + $3 * num / den; done = 1 }
+            END { print "keyframe:", k; exit !(k > 3.99 && k < 4.01) }' probe.txt
+          # a container the bundled build can't write falls back to .mkv in the app; check that works
+          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -y -ss 2 -to 6 -i sample.mp4 -map 0 -dn -c copy cut.mkv
           ls -la build/ffmpeg.exe
 
       - name: Get mpv.dll

@@ -12,7 +12,7 @@ fi
 cd "build/ffmpeg-src/ffmpeg-$VER"
 
 DEMUX=mov,matroska,avi,mpegts,mpegps,flv,asf,ogg,mxf,h264,hevc,aac,mp3,ac3,wav,flac
-MUX=mp4,mov,ipod,matroska,webm,avi,mpegts,flv,asf,ogg,mxf,mp3,adts,ac3,wav,flac,framecrc,null
+MUX=mp4,mov,ipod,3gp,3g2,f4v,matroska,webm,avi,mpegts,mpeg,vob,flv,asf,ogg,ogv,mxf,mp3,adts,ac3,wav,flac,framecrc,null
 PARSE=h264,hevc,av1,vp8,vp9,mpeg4video,mpegvideo,vc1,mjpeg,aac,aac_latm,ac3,mpegaudio,opus,vorbis,flac,dca
 BSF=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,vp9_superframe,vp9_superframe_split,extract_extradata,av1_frame_merge,av1_frame_split,mpeg4_unpack_bframes,setts,null
 
