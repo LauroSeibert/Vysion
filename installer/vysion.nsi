@@ -100,6 +100,7 @@ Section "Vysion (required)" SecMain
   SetOutPath "$INSTDIR"
   File "..\build\Vysion.exe"
   File "..\build\mpv.dll"
+  File "..\build\ffmpeg.exe"
   File "..\README.md"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
@@ -169,7 +170,7 @@ FunctionEnd
 Section "Uninstall"
   Delete "$INSTDIR\Vysion.exe"
   Delete "$INSTDIR\mpv.dll"
-  Delete "$INSTDIRfmpeg.exe"
+  Delete "$INSTDIR\ffmpeg.exe"
   Delete "$INSTDIR\libmpv-2.dll"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\Uninstall.exe"
