@@ -371,6 +371,7 @@ struct App {
     double trimKeyA = -1;          // where the copy will really start (keyframe at or before trimA); -1 = finding out
     int trimProbeGen = 0;          // discards stale keyframe answers
     bool trimBusy = false;         // saving
+    int rotateBeforeTrim = 0;      // the view rotation to bring back when trimming ends
 
     // overlays -> render thread
     std::mutex rm;
@@ -950,7 +951,7 @@ static Hit HitTestRaw(const Layout& L, int x, int y, bool bottom, bool sides, bo
         if (In(L.mute, x, y)) return H_MUTE;
         if (In(L.volume, x, y)) return H_VOLUME;
         if (In(L.repeat, x, y)) return H_REPEAT;
-        if (In(L.rotate, x, y)) return H_ROTATE;
+        if (!g.trimMode && In(L.rotate, x, y)) return H_ROTATE;
         if (g.hasFile && In(L.trim, x, y)) return H_TRIM;
         if (In(L.fullscreen, x, y)) return H_FULLSCREEN;
         return H_BAR;
@@ -1180,9 +1181,9 @@ static void DrawBottomIcons(Graphics& gr, const Layout& L, int oy) {
     }
 
     // rotate view
-    hoverRect(L.rotate, H_ROTATE);
+    if (!g.trimMode) hoverRect(L.rotate, H_ROTATE);
     C(L.rotate, cx, cy);
-    if (!DrawGlyph(gr, G_ROTATE, cx, cy, gs, W)) {
+    if (!DrawGlyph(gr, G_ROTATE, cx, cy, gs, g.trimMode ? Color(90, 255, 255, 255) : W)) {
         gr.DrawArc(&pen, cx - 7 * s, cy - 7 * s, 14 * s, 14 * s, -60, 290);
         gr.DrawLine(&pen, cx + 3.5f * s, cy - 6 * s, cx + 7 * s, cy - 7.5f * s);
         gr.DrawLine(&pen, cx + 3.5f * s, cy - 6 * s, cx + 4.5f * s, cy - 2 * s);
@@ -1621,7 +1622,7 @@ static void OpenFile(const std::wstring& pathIn) {
     }
     g.file = path;
     g.eofHandled = false;
-    if (!g.trimBusy) { g.trimMode = false; g.trimProbeGen++; }
+    if (!g.trimBusy) { g.trimMode = false; g.trimProbeGen++; g.rotateBeforeTrim = 0; }
     if (g.rotate) { g.rotate = 0; Cmd({"set", "video-rotate", "0"}); }
     g.eof = false;
     FlashBottom(2000);
@@ -1923,11 +1924,22 @@ static void SetTrimMode(bool on) {
     }
     g.trimMode = on;
     if (on) {
+        // trimming works on the file as it is: show the original orientation, and pause
+        g.rotateBeforeTrim = g.rotate;
+        if (g.rotate) { g.rotate = 0; Cmd({"set", "video-rotate", "0"}); }
+        if (!g.paused) TogglePause();
         g.trimA = 0; g.trimB = g.duration;
         ProbeKeyframe(g.trimA);
         ShowToast(L"Drag the handles, or press I / O at the playhead");
     } else {
         g.trimProbeGen++;
+        if (g.rotateBeforeTrim && !g.rotate) {   // bring back the rotation the user had
+            g.rotate = g.rotateBeforeTrim;
+            char b[8];
+            snprintf(b, sizeof b, "%d", g.rotate);
+            Cmd({"set", "video-rotate", b});
+        }
+        g.rotateBeforeTrim = 0;
     }
     ComposeOverlay();
     UpdateVisibility();
@@ -1990,7 +2002,7 @@ static void OnTrimResult(TrimResult* r) {
     } else if (r->kind == 2) {
         g.trimBusy = false;
         if (r->ok) {
-            g.trimMode = false;
+            SetTrimMode(false);
             ShowToast(L"Saved " + std::wstring(PathFindFileNameW(r->path.c_str())));
         } else {
             ShowToast(L"Couldn't save the trimmed copy");
@@ -2418,7 +2430,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_DOWN: SetVolume(g.volume - 5); break;
         case 'M': ToggleMute(); break;
         case 'R':
-            if (ctrl) SetRotation(g.rotate + (shift ? -90 : 90));
+            if (ctrl) { if (!g.trimMode) SetRotation(g.rotate + (shift ? -90 : 90)); }
             else CycleRepeat();
             break;
         case 'F': case VK_F11: ToggleFullscreen(); break;
