@@ -118,7 +118,7 @@ For the newest codecs, you can replace the bundled DLL with a current `libmpv-2.
 
 Then put a libmpv DLL next to `build/Vysion.exe`. For trimming, `sh scripts/build-ffmpeg.sh` (Linux, needs
 `g++-mingw-w64-x86-64-posix`) builds the small stream-copy `build/ffmpeg.exe`; a regular ffmpeg.exe works too. To build the installer, run
-`makensis -DVERSION=0.3.0 installer/vysion.nsi` (NSIS 3), which writes `build/Vysion-Setup-0.3.0.exe`.
+`makensis -DVERSION=0.3.1 installer/vysion.nsi` (NSIS 3), which writes `build/Vysion-Setup-0.3.1.exe`.
 
 ## License note
 
