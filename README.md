@@ -36,7 +36,7 @@ no runtime and no background services.
 - **Rotate the view** (button, or `Ctrl+R` / `Ctrl+Shift+R`): turn a sideways 9:16 clip into 16:9 instantly.
   It rotates on the GPU while drawing, with no re-encoding, and the file is never touched. The previews rotate
   too, and rotation resets for the next video.
-- **Trim without re-encoding** (pen button, or `Ctrl+E`): drag the two yellow handles, or press `I` / `O`
+- **Trim without re-encoding** (pen button, or `Ctrl+E`): drag the two handles, or press `I` / `O`
   to set the start / end at the current frame, then **Save as copy**. The copy is written next to the
   original as `name (trim).ext` in about a second, with no quality loss. A lossless cut has to start on a
   keyframe, so the start snaps back to the nearest keyframe before it; the timeline shows where that is.

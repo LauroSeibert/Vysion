@@ -971,7 +971,7 @@ static double TimeAtX(const Layout& L, int x) {
 // ---------------------------------------------------------------------------------------------
 using namespace Gdiplus;
 static const Color kAccent(255, 76, 160, 255);
-static const Color kTrim(255, 255, 196, 64);   // trim selection / handles
+static const Color kTrim = kAccent;   // trim selection / handles: same blue as the progress bar
 
 static void RoundRectPath(GraphicsPath& p, REAL x, REAL y, REAL w, REAL h, REAL r) {
     r = std::min(r, std::min(w, h) / 2);
@@ -1026,6 +1026,7 @@ enum : wchar_t {
 static bool DrawGlyph(Graphics& gr, wchar_t ch, REAL cx, REAL cy, REAL px, const Color& c, wchar_t ref = 0) {
     const FontFamily* ff = IconFont();
     if (!ff) return false;
+    px = std::round(px);   // whole-pixel sizes let the font's hinting snap edges to the pixel grid
     GraphicsPath path;
     wchar_t str[2] = {ch, 0};
     path.AddString(str, 1, ff, FontStyleRegular, px, PointF(0, 0), StringFormat::GenericTypographic());
@@ -1039,11 +1040,15 @@ static bool DrawGlyph(Graphics& gr, wchar_t ch, REAL cx, REAL cy, REAL px, const
         path.GetBounds(&b);
     }
     if (b.Width <= 0 || b.Height <= 0) return false;
-    Matrix m;
-    m.Translate(std::round(cx - (b.X + b.Width / 2)), std::round(cy - (b.Y + b.Height / 2)));
-    path.Transform(&m);
+    // Drawn as hinted text rather than a filled outline: grid-fitting keeps strokes on whole pixels
+    // (a filled path ignores hinting, so edges fall between pixels and look soft).
+    REAL dx = std::round(cx - (b.X + b.Width / 2)), dy = std::round(cy - (b.Y + b.Height / 2));
+    Font f(ff, px, FontStyleRegular, UnitPixel);
     SolidBrush br(c);
-    gr.FillPath(&br, &path);
+    TextRenderingHint old = gr.GetTextRenderingHint();
+    gr.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+    gr.DrawString(str, 1, &f, PointF(dx, dy), StringFormat::GenericTypographic(), &br);
+    gr.SetTextRenderingHint(old);
     return true;
 }
 
@@ -1076,7 +1081,7 @@ static void IconRepeat(Graphics& gr, Pen& pen, SolidBrush& fill, REAL cx, REAL c
     gr.DrawLine(&pen, x + r + 2 * s + a, y + h - a, x + r + 2 * s, y + h);          // bottom arrow (pointing left)
     gr.DrawLine(&pen, x + r + 2 * s + a, y + h + a, x + r + 2 * s, y + h);
     if (mode == REPEAT_ONE) {
-        Font f(UiFont(), 7.5f * s, FontStyleBold, UnitPixel);
+        Font f(UiFont(), std::round(8 * s), FontStyleBold, UnitPixel);
         StringFormat c; c.SetAlignment(StringAlignmentCenter); c.SetLineAlignment(StringAlignmentCenter);
         gr.DrawString(L"1", -1, &f, RectF(cx - 6 * s, cy - 6 * s, 12 * s, 12 * s), &c, &fill);
     } else {  // off: slash through it
@@ -1146,7 +1151,7 @@ static void DrawBottomIcons(Graphics& gr, const Layout& L, int oy) {
 
     // trim (pen): highlighted while trimming
     if (g.hasFile) {
-        if (g.trimMode) FillRound(gr, SolidBrush(Color(g.hover == H_TRIM ? 70 : 50, 255, 196, 64)), (REAL)L.trim.left,
+        if (g.trimMode) FillRound(gr, SolidBrush(Color(g.hover == H_TRIM ? 70 : 50, 76, 160, 255)), (REAL)L.trim.left,
                                   (REAL)(L.trim.top - oy), (REAL)(L.trim.right - L.trim.left), (REAL)(L.trim.bottom - L.trim.top), 2 * s);
         else hoverRect(L.trim, H_TRIM);
         C(L.trim, cx, cy);
@@ -1163,14 +1168,14 @@ static void DrawBottomIcons(Graphics& gr, const Layout& L, int oy) {
     if (g.trimMode) {
         const RECT& r = L.trimSave;
         bool hv = g.hover == H_TRIM_SAVE && !g.trimBusy;
-        Color bg = g.trimBusy ? Color(90, 255, 196, 64) : hv ? Color(255, 255, 210, 110) : kTrim;
+        Color bg = g.trimBusy ? Color(90, 76, 160, 255) : hv ? Color(255, 116, 182, 255) : kTrim;
         REAL bx = (REAL)r.left, by = (REAL)(r.top - oy), bw = (REAL)(r.right - r.left), bh = (REAL)(r.bottom - r.top);
         FillRound(gr, SolidBrush(bg), bx, by, bw, bh, bh / 2);
-        Font f(UiFont(), 12.5f * s, FontStyleBold, UnitPixel);
+        Font f(UiFont(), std::round(12 * s), FontStyleBold, UnitPixel);
         StringFormat c; c.SetAlignment(StringAlignmentCenter); c.SetLineAlignment(StringAlignmentCenter);
         c.SetFormatFlags(StringFormatFlagsNoWrap);
         const wchar_t* t = g.trimBusy ? L"Saving…" : L.trimSaveWide ? L"Save as copy" : L"Save";
-        SolidBrush ink(g.trimBusy ? Color(255, 255, 255, 255) : Color(255, 24, 24, 24));
+        SolidBrush ink(Color(255, 255, 255, 255));
         gr.DrawString(t, -1, &f, RectF(bx, by, bw, bh), &c, &ink);
     }
 
@@ -1224,9 +1229,9 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
     LinearGradientBrush grad(Point(0, H - gradH - 1), Point(0, H), Color(0, 0, 0, 0), Color(185, 0, 0, 0));
     gr.FillRectangle(&grad, 0, H - gradH, W, gradH);
 
-    Font font(UiFont(), 13.0f * s, FontStyleRegular, UnitPixel);
-    Font fontSmall(UiFont(), 11.5f * s, FontStyleRegular, UnitPixel);
-    Font fontBold(UiFont(), 12.5f * s, FontStyleBold, UnitPixel);
+    Font font(UiFont(), std::round(13 * s), FontStyleRegular, UnitPixel);
+    Font fontSmall(UiFont(), std::round(12 * s), FontStyleRegular, UnitPixel);
+    Font fontBold(UiFont(), std::round(12 * s), FontStyleBold, UnitPixel);
     SolidBrush white(Color(255, 255, 255, 255));
     SolidBrush soft(Color(215, 255, 255, 255));
     SolidBrush dim(Color(110, 255, 255, 255));
@@ -1262,8 +1267,8 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
         REAL ax = (REAL)L.trimAX, bx = (REAL)L.trimBX, bandH = 4 * s, by = L.trackY - oy - bandH / 2;
         if (g.trimKeyA >= 0 && g.trimKeyA < g.trimA - 0.0005) {
             REAL kx = tl + (REAL)((tr - tl) * std::clamp(g.trimKeyA / g.duration, 0.0, 1.0));
-            FillRound(gr, SolidBrush(Color(110, 255, 196, 64)), kx, by, std::max(1.0f, ax - kx), bandH, 0);
-            Pen tick(Color(200, 255, 196, 64), 1.0f * s);
+            FillRound(gr, SolidBrush(Color(110, 76, 160, 255)), kx, by, std::max(1.0f, ax - kx), bandH, 0);
+            Pen tick(Color(200, 76, 160, 255), 1.0f * s);
             gr.DrawLine(&tick, kx, by - 4 * s, kx, by + bandH + 4 * s);
         }
         if (bx > ax) FillRound(gr, SolidBrush(kTrim), ax, by, bx - ax, bandH, 0);
@@ -1280,8 +1285,10 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
     // trim handles with their exact times above them
     bool hours = g.duration >= 3600;
     if (g.trimMode && g.duration > 0) {
-        REAL hw = 5 * s, hh = 24 * s, hy = L.trackY - oy - hh / 2;
-        REAL labelH = 20 * s, ly = hy - labelH - 4 * s;
+        // whole, even pixel sizes so the handles' edges sit exactly on pixels
+        auto even = [](REAL v) { return 2 * std::round(v / 2); };
+        REAL hw = even(4 * s), hh = even(24 * s), hy = (REAL)(L.trackY - oy) - hh / 2;
+        REAL labelH = std::round(20 * s), ly = std::round(hy - labelH - 4 * s);
         RectF la, lbb;
         std::wstring ta = FormatTimeMs(g.trimA, hours), tb = FormatTimeMs(g.trimB, hours);
         gr.MeasureString(ta.c_str(), -1, &fontSmall, PointF(0, 0), &la);
@@ -1294,10 +1301,12 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
             xa = std::max(2 * s, mid - 2 * s - wa);
             xb = std::min(W - wb - 2 * s, mid + 2 * s);
         }
+        xa = std::round(xa); xb = std::round(xb); wa = std::round(wa); wb = std::round(wb);
         auto handle = [&](int x, Hit h, REAL lx, REAL lw, const std::wstring& t) {
             bool act = g.hover == h || g.drag == h;
-            REAL w = act ? hw + 2 * s : hw;
-            FillRound(gr, SolidBrush(Color(255, 24, 24, 24)), x - w / 2 - 1 * s, hy - 1 * s, w + 2 * s, hh + 2 * s, 2 * s);
+            REAL w = act ? hw + even(2 * s) : hw;
+            REAL o = std::max(1.0f, std::round(s));   // dark outline keeps it visible on bright video
+            FillRound(gr, SolidBrush(Color(255, 24, 24, 24)), x - w / 2 - o, hy - o, w + 2 * o, hh + 2 * o, 2 * s);
             FillRound(gr, SolidBrush(act ? Color(255, 255, 255, 255) : kTrim), x - w / 2, hy, w, hh, 2 * s);
             FillRound(gr, SolidBrush(Color(act ? 235 : 200, 20, 20, 20)), lx, ly, lw, labelH, labelH / 2);
             gr.DrawString(t.c_str(), -1, &fontSmall, RectF(lx, ly, lw, labelH), &center, act ? &white : &soft);
@@ -1916,7 +1925,7 @@ static void SetTrimMode(bool on) {
     if (on) {
         g.trimA = 0; g.trimB = g.duration;
         ProbeKeyframe(g.trimA);
-        ShowToast(L"Drag the yellow handles, or press I / O at the playhead");
+        ShowToast(L"Drag the handles, or press I / O at the playhead");
     } else {
         g.trimProbeGen++;
     }
