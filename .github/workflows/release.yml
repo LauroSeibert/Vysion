@@ -48,7 +48,7 @@ jobs:
 
       - name: Build ffmpeg.exe (stream copy only)
         if: steps.ffcache.outputs.cache-hit != 'true'
-        run: ./scripts/build-ffmpeg.sh
+        run: sh scripts/build-ffmpeg.sh
 
       - name: Test lossless cut
         run: |
@@ -61,7 +61,8 @@ jobs:
           awk -v d="$d" 'BEGIN { exit !(d > 4.0 && d < 4.9) }'
           [ "$(ffprobe -v error -select_streams v -show_entries stream=codec_name -of csv=p=0 cut.mp4)" = h264 ]
           # keyframe probe Vysion uses to show where the cut really starts
-          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -copyts -ss 5.2 -i sample.mp4             -map 0:v:0 -c copy -frames:v 1 -f framecrc - | tail -1
+          # (first packet's pts is negative: keyframe = 5.2 + pts, expected 4.0)
+          WINEDEBUG=-all wine build/ffmpeg.exe -hide_banner -v error -nostdin -ss 5.2 -i sample.mp4             -map 0:v:0 -c copy -frames:v 1 -avoid_negative_ts disabled -f framecrc - | tee probe.txt
           ls -la build/ffmpeg.exe
 
       - name: Get mpv.dll

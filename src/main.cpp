@@ -162,6 +162,16 @@ static std::wstring FormatTime(double t, bool hours) {
     else swprintf(b, 32, L"%02ld:%02ld", s / 60, s % 60);
     return b;
 }
+// Same, with milliseconds (for the trim handles): 1:23.456 or 1:02:03.456
+static std::wstring FormatTimeMs(double t, bool hours) {
+    if (!(t >= 0)) t = 0;
+    long long ms = (long long)std::llround(t * 1000);
+    long s = (long)(ms / 1000);
+    wchar_t b[40];
+    if (hours) swprintf(b, 40, L"%ld:%02ld:%02ld.%03d", s / 3600, (s / 60) % 60, s % 60, (int)(ms % 1000));
+    else swprintf(b, 40, L"%ld:%02ld.%03d", s / 60, s % 60, (int)(ms % 1000));
+    return b;
+}
 extern UINT gDpiForMetrics;
 static int SysMetric(int idx) {
     typedef int(WINAPI * Fn)(int, UINT);
@@ -273,7 +283,7 @@ struct ThumbShared {
 // Global app state
 // ---------------------------------------------------------------------------------------------
 enum Hit { H_NONE, H_VIDEO, H_BAR, H_PLAY, H_PREV, H_NEXT, H_TIMELINE, H_SCRUB, H_MUTE, H_VOLUME, H_FULLSCREEN,
-           H_REPEAT, H_ROTATE, H_MIN, H_MAX, H_CLOSE, H_EXITFS };
+           H_REPEAT, H_ROTATE, H_MIN, H_MAX, H_CLOSE, H_EXITFS, H_TRIM, H_TRIM_A, H_TRIM_B, H_TRIM_SAVE };
 
 enum Repeat { REPEAT_OFF = 0, REPEAT_ONE = 1, REPEAT_NEXT = 2 };
 
@@ -290,6 +300,10 @@ struct Layout {
     // bottom controls
     int trackL = 0, trackR = 0, trackY = 0, rowY = 0, barTop = 0;
     RECT timeline{}, play{}, mute{}, volume{}, rotate{}, repeat{}, fullscreen{};
+    RECT trim{}, trimSave{};   // pen button; "Save as copy" (trim mode only)
+    bool trimSaveWide = true;  // room for the full label
+    bool hidePlay = false;     // narrow window in trim mode: the save button takes the play button's place
+    int trimAX = 0, trimBX = 0;   // x of the two trim handles
     int volL = 0, volR = 0, volY = 0;
     RECT scrub{};          // big area above the timeline that also scrubs
     int ovH = 0;           // bottom overlay height
@@ -350,6 +364,13 @@ struct App {
     bool eofHandled = false;
     int repeat = REPEAT_NEXT;
 
+    // trimming ("Save as copy" without re-encoding; the start snaps back to a keyframe)
+    bool trimMode = false;
+    double trimA = 0, trimB = 0;   // chosen start / end (seconds)
+    double trimKeyA = -1;          // where the copy will really start (keyframe at or before trimA); -1 = finding out
+    int trimProbeGen = 0;          // discards stale keyframe answers
+    bool trimBusy = false;         // saving
+
     // overlays -> render thread
     std::mutex rm;
     std::condition_variable rcv;
@@ -369,6 +390,7 @@ UINT gDpiForMetrics = 96;
 #define WM_APP_NEXT (WM_APP + 3)
 #define WM_APP_SNAPSHOT (WM_APP + 4)
 #define WM_APP_REGISTER (WM_APP + 5)
+#define WM_APP_TRIM (WM_APP + 6)
 #define TIMER_HIDE 1
 #define TIMER_SAVE 2
 #define TIMER_TOAST 3
@@ -871,6 +893,18 @@ static Layout ComputeLayout() {
     L.fullscreen = {cw - S(14) - S(34), cy - S(16), cw - S(14), cy + S(16)};
     L.repeat = {L.fullscreen.left - S(6) - S(34), cy - S(16), L.fullscreen.left - S(6), cy + S(16)};
     L.rotate = {L.repeat.left - S(6) - S(34), cy - S(16), L.repeat.left - S(6), cy + S(16)};
+    L.trim = {L.rotate.left - S(6) - S(34), cy - S(16), L.rotate.left - S(6), cy + S(16)};
+    if (g.trimMode) {
+        int right = L.trim.left - S(8);
+        int room = right - (L.play.right + S(10));
+        if (room < S(64)) {   // too narrow: take the play button's place (clicking the video still pauses)
+            L.hidePlay = true;
+            room = right - (L.volume.right + S(10));
+        }
+        int w = std::clamp(room, S(64), S(118));
+        L.trimSaveWide = w >= S(110);
+        L.trimSave = {right - w, cy - S(15), right, cy + S(15)};
+    }
 
     // Preview size, keep in sync with what the thumb thread renders
     L.thumbW = S(200);
@@ -879,6 +913,10 @@ static Layout ComputeLayout() {
     L.ovH = std::max(L.ovH, 1);
     // the whole band where the preview appears also works as a (big) timeline
     L.scrub = {0, std::max(L.btnH, L.trackY - S(16) - L.thumbH), cw, L.barTop};
+    if (g.duration > 0) {
+        auto X = [&](double t) { return L.trackL + (int)std::lround((L.trackR - L.trackL) * std::clamp(t / g.duration, 0.0, 1.0)); };
+        L.trimAX = X(g.trimA); L.trimBX = X(g.trimB);
+    }
     return L;
 }
 static bool In(const RECT& r, int x, int y) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; }
@@ -897,13 +935,22 @@ static Hit HitTestRaw(const Layout& L, int x, int y, bool bottom, bool sides, bo
     if (sides && In(L.prev, x, y)) return H_PREV;
     if (sides && In(L.next, x, y)) return H_NEXT;
     if (!bottom) return H_VIDEO;
+    if (g.trimMode && g.duration > 0 && y >= L.trackY - (int)(26 * L.s) && y <= L.trackY + (int)(12 * L.s)) {
+        int da = std::abs(x - L.trimAX), db = std::abs(x - L.trimBX), grab = (int)(9 * L.s);
+        if (da <= grab || db <= grab) {
+            if (da == db) return x < L.trimAX ? H_TRIM_A : H_TRIM_B;   // handles on top of each other
+            return da < db ? H_TRIM_A : H_TRIM_B;
+        }
+    }
     if (y >= L.barTop) {
         if (In(L.timeline, x, y)) return H_TIMELINE;
-        if (In(L.play, x, y)) return H_PLAY;
+        if (g.trimMode && In(L.trimSave, x, y)) return H_TRIM_SAVE;
+        if (!L.hidePlay && In(L.play, x, y)) return H_PLAY;
         if (In(L.mute, x, y)) return H_MUTE;
         if (In(L.volume, x, y)) return H_VOLUME;
         if (In(L.repeat, x, y)) return H_REPEAT;
         if (In(L.rotate, x, y)) return H_ROTATE;
+        if (g.hasFile && In(L.trim, x, y)) return H_TRIM;
         if (In(L.fullscreen, x, y)) return H_FULLSCREEN;
         return H_BAR;
     }
@@ -1389,7 +1436,7 @@ static void ComposeOverlay() {
 
 static bool BottomActiveHit(Hit h) {
     return h == H_TIMELINE || h == H_SCRUB || h == H_PLAY || h == H_MUTE || h == H_VOLUME || h == H_REPEAT || h == H_ROTATE ||
-           h == H_FULLSCREEN || h == H_BAR;
+           h == H_FULLSCREEN || h == H_BAR || h == H_TRIM || h == H_TRIM_A || h == H_TRIM_B || h == H_TRIM_SAVE;
 }
 // Fade animation (UI thread timer). Fade in fast, fade out slower.
 static void PushAlphas() {
