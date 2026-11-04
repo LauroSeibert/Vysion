@@ -1273,7 +1273,7 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
         }
         if (bx > ax) FillRound(gr, SolidBrush(kTrim), ax, by, bx - ax, bandH, 0);
     } else if (px > tl) FillRound(gr, accent, tl, ty, px - tl, th, th / 2);
-    {
+    if (!g.trimMode) {   // no playhead knob while trimming: it only gets in the way of the handles
         REAL kr = (hovTl ? 8.0f : 7.0f) * s;
         REAL ky = L.trackY - oy;
         SolidBrush knobFill(Color(255, 24, 24, 24));
@@ -2139,6 +2139,14 @@ static void UpdateHoverPreview(const Layout& L) {
         if (!exact) RequestThumb(t);
     }
 }
+// Arrow normally, hand over buttons, left-right arrows over the trim handles.
+static void ApplyCursor() {
+    bool sizer = g.hover == H_TRIM_A || g.hover == H_TRIM_B || g.drag == H_TRIM_A || g.drag == H_TRIM_B;
+    bool button = g.drag == H_NONE && (g.hover == H_PLAY || g.hover == H_PREV || g.hover == H_NEXT || g.hover == H_MUTE ||
+                  g.hover == H_FULLSCREEN || g.hover == H_REPEAT || g.hover == H_ROTATE || g.hover == H_TRIM ||
+                  g.hover == H_TRIM_SAVE || g.hover == H_MIN || g.hover == H_MAX || g.hover == H_CLOSE || g.hover == H_EXITFS);
+    SetCursor(g.cursorHidden ? nullptr : LoadCursor(nullptr, sizer ? IDC_SIZEWE : button ? IDC_HAND : IDC_ARROW));
+}
 static void OnMouseMove(int x, int y) {
     bool moved = (x != g.mouseX || y != g.mouseY);
     g.mouseX = x; g.mouseY = y;
@@ -2167,6 +2175,7 @@ static void OnMouseMove(int x, int y) {
         if (now - g.lastSeekTick > 60) { SeekAbs(start ? g.trimA : g.trimB, true); g.lastSeekTick = now; }
     }
     UpdateHoverPreview(L);
+    if (old != g.hover) ApplyCursor();
     if (moved || old != g.hover) ComposeOverlay();
 }
 static void OnLButtonDown(int x, int y) {
@@ -2304,8 +2313,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) {
-            bool sizer = g.hover == H_TRIM_A || g.hover == H_TRIM_B || g.drag == H_TRIM_A || g.drag == H_TRIM_B;
-            SetCursor(g.cursorHidden ? nullptr : LoadCursor(nullptr, sizer ? IDC_SIZEWE : IDC_ARROW));
+            ApplyCursor();
             return TRUE;
         }
         break;
