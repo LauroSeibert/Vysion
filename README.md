@@ -109,7 +109,7 @@ For the newest codecs, you can replace the bundled DLL with a current `libmpv-2.
 - **Windows:** in an MSYS2 UCRT64 shell with gcc, run `build.bat`
 
 Then put a libmpv DLL next to `build/Vysion.exe`. To build the installer, run
-`makensis -DVERSION=1.1.0 installer/vysion.nsi` (NSIS 3), which writes `build/Vysion-Setup-1.1.0.exe`.
+`makensis -DVERSION=0.2.0 installer/vysion.nsi` (NSIS 3), which writes `build/Vysion-Setup-0.2.0.exe`.
 
 ## License note
 

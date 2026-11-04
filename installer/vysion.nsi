@@ -1,12 +1,12 @@
 ; Vysion installer (NSIS). Per-user install, no admin prompt.
-; Build:  makensis -DVERSION=1.1.0 installer/vysion.nsi   (expects build/Vysion.exe and build/mpv.dll)
+; Build:  makensis -DVERSION=0.2.0 installer/vysion.nsi   (expects build/Vysion.exe and build/mpv.dll)
 
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
 !ifndef VERSION
-  !define VERSION "1.1.0"
+  !define VERSION "0.2.0"
 !endif
 !define APP        "Vysion"
 !define PUBLISHER  "Lauro Seibert"
