@@ -33,6 +33,9 @@ no runtime and no background services.
 - **Folder navigation that follows Explorer.** Next / previous use the same order as the Explorer window
   you opened the video from (name, date, size, groups, ascending or descending). They also work from
   search results, and fall back to natural name order.
+- **Rotate the view** (button, or `Ctrl+R` / `Ctrl+Shift+R`): turn a sideways 9:16 clip into 16:9 instantly.
+  It rotates on the GPU while drawing, with no re-encoding, and the file is never touched. The previews rotate
+  too, and rotation resets for the next video.
 - **Three repeat modes** (one button, or `R`): don't repeat, repeat this video, or play the next video
   automatically.
 - **Remembers your settings:** volume, mute, repeat mode and window size and position.
@@ -52,6 +55,7 @@ no runtime and no background services.
 | Up / Down, mouse wheel | Volume |
 | M | Mute |
 | R | Cycle repeat mode |
+| Ctrl+R / Ctrl+Shift+R | Rotate view clockwise / counter-clockwise |
 | N / P, PageDown / PageUp, mouse side buttons | Next / previous video in the folder |
 | , / . | Previous / next frame |
 | Ctrl+O / Ctrl+W | Open / close |
@@ -69,6 +73,7 @@ no runtime and no background services.
 | Explorer sort order | Shell COM APIs (`IShellWindows`, `IFolderView`) |
 | Settings | INI file in `%APPDATA%\Vysion` |
 | Build | MinGW-w64 (cross-compiled from Linux, or MSYS2 on Windows) |
+| Installer | NSIS: per-user, no admin prompt, Apps & features entry, Default apps registration |
 
 How it fits together:
 
@@ -78,11 +83,21 @@ render thread  owns the GL context, renders mpv + overlay layers, vsync
 thumb thread   hidden muted mpv instance -> offscreen FBO -> preview cache
 ```
 
-## Download and run
+## Download and install
 
-Grab the latest zip from **Releases**, extract it, and run `Vysion.exe`. Keep `Vysion.exe` and the mpv DLL
-in the same folder. To make it your default player: right-click a video, choose
-**Open with > Choose another app**, pick `Vysion.exe` and tick **Always**.
+Download **`Vysion-Setup-x.y.z.exe`** from **Releases** and run it. It installs for your user only (no admin
+prompt) into `%LOCALAPPDATA%\Programs\Vysion`. It also:
+- adds a Start menu shortcut, plus a desktop shortcut if you tick it;
+- adds an entry to **Settings > Apps** with a working uninstaller;
+- registers Vysion in **Open with** and **Settings > Default apps**. Tick the box on the last page to open
+  that settings page and make Vysion your default player.
+
+Windows doesn't let apps make themselves the default without asking, which is why that last step is one click.
+The installer isn't code-signed, so SmartScreen may show "Windows protected your PC" the first time:
+click **More info > Run anyway**.
+
+If you'd rather not install anything, there's also a portable zip: extract it anywhere and run `Vysion.exe`,
+keeping the mpv DLL next to it.
 
 For the newest codecs, you can replace the bundled DLL with a current `libmpv-2.dll` from
 [shinchiro's mpv builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases). Vysion loads
@@ -93,7 +108,8 @@ For the newest codecs, you can replace the bundled DLL with a current `libmpv-2.
 - **Linux (cross-compile):** install `g++-mingw-w64-x86-64-posix`, then run `./build.sh`
 - **Windows:** in an MSYS2 UCRT64 shell with gcc, run `build.bat`
 
-Then put a libmpv DLL next to `build/Vysion.exe`.
+Then put a libmpv DLL next to `build/Vysion.exe`. To build the installer, run
+`makensis -DVERSION=1.1.0 installer/vysion.nsi` (NSIS 3), which writes `build/Vysion-Setup-1.1.0.exe`.
 
 ## License note
 

@@ -3,8 +3,8 @@
 2 ICON "file.ico"
 1 RT_MANIFEST "app.manifest"
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,0,0,0
-PRODUCTVERSION 1,0,0,0
+FILEVERSION 1,1,0,0
+PRODUCTVERSION 1,1,0,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -12,7 +12,7 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "Vysion"
       VALUE "ProductName", "Vysion"
-      VALUE "FileVersion", "1.0.0"
+      VALUE "FileVersion", "1.1.0"
     END
   END
   BLOCK "VarFileInfo"

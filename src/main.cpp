@@ -273,7 +273,7 @@ struct ThumbShared {
 // Global app state
 // ---------------------------------------------------------------------------------------------
 enum Hit { H_NONE, H_VIDEO, H_BAR, H_PLAY, H_PREV, H_NEXT, H_TIMELINE, H_SCRUB, H_MUTE, H_VOLUME, H_FULLSCREEN,
-           H_REPEAT, H_MIN, H_MAX, H_CLOSE, H_EXITFS };
+           H_REPEAT, H_ROTATE, H_MIN, H_MAX, H_CLOSE, H_EXITFS };
 
 enum Repeat { REPEAT_OFF = 0, REPEAT_ONE = 1, REPEAT_NEXT = 2 };
 
@@ -289,7 +289,7 @@ struct Layout {
     RECT prev{}, next{};
     // bottom controls
     int trackL = 0, trackR = 0, trackY = 0, rowY = 0, barTop = 0;
-    RECT timeline{}, play{}, mute{}, volume{}, repeat{}, fullscreen{};
+    RECT timeline{}, play{}, mute{}, volume{}, rotate{}, repeat{}, fullscreen{};
     int volL = 0, volR = 0, volY = 0;
     RECT scrub{};          // big area above the timeline that also scrubs
     int ovH = 0;           // bottom overlay height
@@ -344,7 +344,8 @@ struct App {
     int shownThumbGen = -1;
     DWORD lastSeekTick = 0;
     std::wstring toast;
-    bool toastAtRepeat = false;    // tooltip next to the repeat button instead of centred
+    int toastRight = 0;            // >0: tooltip sits on the button row, ending at this x (next to its button)
+    int rotate = 0;                // extra view rotation in degrees (0/90/180/270), display only
     bool eof = false;              // at the end of the file (keep-open)
     bool eofHandled = false;
     int repeat = REPEAT_NEXT;
@@ -375,7 +376,7 @@ UINT gDpiForMetrics = 96;
 #define TIMER_FLASH 5
 
 static void ComposeOverlay();
-static void ShowToast(const std::wstring& text, bool atRepeat);
+static void ShowToast(const std::wstring& text, int anchorRight);
 static bool OpenSibling(int dir, bool wrap);
 static void RequestRender() {
     { std::lock_guard<std::mutex> l(g.rm); g.rRedraw = true; }
@@ -869,6 +870,7 @@ static Layout ComputeLayout() {
     L.volL = L.volume.left + S(5); L.volR = L.volume.right - S(5); L.volY = cy;
     L.fullscreen = {cw - S(14) - S(34), cy - S(16), cw - S(14), cy + S(16)};
     L.repeat = {L.fullscreen.left - S(6) - S(34), cy - S(16), L.fullscreen.left - S(6), cy + S(16)};
+    L.rotate = {L.repeat.left - S(6) - S(34), cy - S(16), L.repeat.left - S(6), cy + S(16)};
 
     // Preview size, keep in sync with what the thumb thread renders
     L.thumbW = S(200);
@@ -901,6 +903,7 @@ static Hit HitTestRaw(const Layout& L, int x, int y, bool bottom, bool sides, bo
         if (In(L.mute, x, y)) return H_MUTE;
         if (In(L.volume, x, y)) return H_VOLUME;
         if (In(L.repeat, x, y)) return H_REPEAT;
+        if (In(L.rotate, x, y)) return H_ROTATE;
         if (In(L.fullscreen, x, y)) return H_FULLSCREEN;
         return H_BAR;
     }
@@ -965,7 +968,7 @@ static const FontFamily* IconFont() {
 }
 enum : wchar_t {
     G_PLAY = 0xE768, G_PAUSE = 0xE769, G_MUTE = 0xE74F, G_VOL0 = 0xE992, G_VOL1 = 0xE993, G_VOL2 = 0xE994, G_VOL3 = 0xE995,
-    G_REPEAT_ALL = 0xE8EE, G_REPEAT_ONE = 0xE8ED, G_NEXT = 0xE893, G_FULLSCREEN = 0xE740, G_BACKTOWINDOW = 0xE73F,
+    G_REPEAT_ALL = 0xE8EE, G_REPEAT_ONE = 0xE8ED, G_NEXT = 0xE893, G_ROTATE = 0xE7AD, G_FULLSCREEN = 0xE740, G_BACKTOWINDOW = 0xE73F,
     G_CHEVRON_LEFT = 0xE76B, G_CHEVRON_RIGHT = 0xE76C,
     G_MINIMIZE = 0xE921, G_MAXIMIZE = 0xE922, G_RESTORE = 0xE923, G_CLOSE = 0xE8BB,
 };
@@ -1092,6 +1095,15 @@ static void DrawBottomIcons(Graphics& gr, const Layout& L, int oy) {
     }
 
     // repeat mode
+    // rotate view
+    hoverRect(L.rotate, H_ROTATE);
+    C(L.rotate, cx, cy);
+    if (!DrawGlyph(gr, G_ROTATE, cx, cy, gs, W)) {
+        gr.DrawArc(&pen, cx - 7 * s, cy - 7 * s, 14 * s, 14 * s, -60, 290);
+        gr.DrawLine(&pen, cx + 3.5f * s, cy - 6 * s, cx + 7 * s, cy - 7.5f * s);
+        gr.DrawLine(&pen, cx + 3.5f * s, cy - 6 * s, cx + 4.5f * s, cy - 2 * s);
+    }
+
     hoverRect(L.repeat, H_REPEAT);
     C(L.repeat, cx, cy);
     {
@@ -1192,8 +1204,8 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
         gr.MeasureString(g.toast.c_str(), -1, &font, PointF(0, 0), &lb);
         REAL tw = lb.Width + 24 * s, thh = 30 * s;
         REAL tx, tyy;
-        if (g.toastAtRepeat) {   // to the left of the repeat button, on the button row
-            tx = std::max(4 * s, (REAL)L.repeat.left - 8 * s - tw);
+        if (g.toastRight > 0) {   // to the left of its button, on the button row
+            tx = std::max(4 * s, (REAL)g.toastRight - 8 * s - tw);
             tyy = (REAL)(L.rowY - oy) - thh / 2;
         } else {
             tx = (W - tw) / 2;
@@ -1215,16 +1227,26 @@ static void ComposeBottom(const Layout& L, std::vector<uint32_t>& buf, int W, in
         REAL bottom = (REAL)(L.trackY - oy) - 16 * s;
         if (tp) {
             REAL bw = (REAL)L.thumbW, bh = (REAL)L.thumbH;
-            REAL sc = std::min(bw / tp->w, bh / tp->h);
-            REAL dw = tp->w * sc, dh = tp->h * sc;
+            bool sideways = g.rotate == 90 || g.rotate == 270;
+            REAL iw = (REAL)(sideways ? tp->h : tp->w), ih = (REAL)(sideways ? tp->w : tp->h);
+            REAL sc = std::min(bw / iw, bh / ih);
+            REAL dw = iw * sc, dh = ih * sc;
             REAL x0 = std::clamp(cxp - dw / 2, 6 * s, W - dw - 6 * s);
             REAL y0 = std::max(0.0f, bottom - dh);
-            Bitmap tb(tp->w, tp->h, tp->w * 4, PixelFormat32bppRGB, (BYTE*)tp->px.data());
+            Bitmap tb0(tp->w, tp->h, tp->w * 4, PixelFormat32bppRGB, (BYTE*)tp->px.data());
+            std::unique_ptr<Bitmap> rotated;
+            Bitmap* tbp = &tb0;
+            if (g.rotate) {   // previews follow the view rotation
+                rotated.reset(tb0.Clone(0, 0, tp->w, tp->h, PixelFormat32bppRGB));
+                rotated->RotateFlip(g.rotate == 90 ? Rotate90FlipNone : g.rotate == 180 ? Rotate180FlipNone : Rotate270FlipNone);
+                tbp = rotated.get();
+            }
+            Bitmap& tb = *tbp;
             GraphicsPath clip;
             RoundRectPath(clip, x0, y0, dw, dh, 3 * s);
             gr.SetClip(&clip);
             gr.SetInterpolationMode(sc > 0.99f && sc < 1.01f ? InterpolationModeNearestNeighbor : InterpolationModeBilinear);
-            gr.DrawImage(&tb, RectF(x0, y0, dw, dh), 0, 0, (REAL)tp->w, (REAL)tp->h, UnitPixel);
+            gr.DrawImage(&tb, RectF(x0, y0, dw, dh), 0, 0, iw, ih, UnitPixel);
             gr.ResetClip();
             Pen border(Color(170, 255, 255, 255), 1.0f * s);
             gr.DrawPath(&border, &clip);
@@ -1365,7 +1387,7 @@ static void ComposeOverlay() {
 }
 
 static bool BottomActiveHit(Hit h) {
-    return h == H_TIMELINE || h == H_SCRUB || h == H_PLAY || h == H_MUTE || h == H_VOLUME || h == H_REPEAT ||
+    return h == H_TIMELINE || h == H_SCRUB || h == H_PLAY || h == H_MUTE || h == H_VOLUME || h == H_REPEAT || h == H_ROTATE ||
            h == H_FULLSCREEN || h == H_BAR;
 }
 // Fade animation (UI thread timer). Fade in fast, fade out slower.
@@ -1432,9 +1454,9 @@ static void FlashBottom(DWORD ms = 2000) {  // show the timeline for a moment, t
     SetTimer(g.hwnd, TIMER_FLASH, ms + 10, nullptr);
     UpdateVisibility();
 }
-static void ShowToast(const std::wstring& text, bool atRepeat = false) {
+static void ShowToast(const std::wstring& text, int anchorRight = 0) {
     g.toast = text;
-    g.toastAtRepeat = atRepeat;
+    g.toastRight = anchorRight;
     SetTimer(g.hwnd, TIMER_TOAST, 1800, nullptr);
     ComposeOverlay();
     UpdateVisibility();
@@ -1462,6 +1484,7 @@ static void OpenFile(const std::wstring& pathIn) {
     }
     g.file = path;
     g.eofHandled = false;
+    if (g.rotate) { g.rotate = 0; Cmd({"set", "video-rotate", "0"}); }
     g.eof = false;
     FlashBottom(2000);
     g.errorText.clear();
@@ -1513,7 +1536,16 @@ static void CycleRepeat() {
     g.cfg.repeat = g.repeat;
     g.cfg.SavePlayer();
     static const wchar_t* names[] = {L"Don't repeat", L"Repeat this video", L"Play next video automatically"};
-    ShowToast(names[g.repeat], true);
+    ShowToast(names[g.repeat], ComputeLayout().repeat.left);
+}
+// Rotate the picture for viewing only (done on the GPU while drawing; the file is untouched).
+static void SetRotation(int deg) {
+    g.rotate = ((deg % 360) + 360) % 360;
+    char b[8];
+    snprintf(b, sizeof b, "%d", g.rotate);
+    Cmd({"set", "video-rotate", b});
+    if (g.hasFile) ShowToast(g.rotate ? L"Rotated " + std::to_wstring(g.rotate) + L"\u00B0" : L"Original orientation", ComputeLayout().rotate.left);
+    ComposeOverlay();
 }
 static void ToggleMute() {
     int m = g.mute ? 0 : 1;
@@ -1833,6 +1865,7 @@ static void OnLButtonDown(int x, int y) {
     case H_NEXT: OpenSibling(+1, true); break;
     case H_MUTE: ToggleMute(); break;
     case H_REPEAT: CycleRepeat(); break;
+    case H_ROTATE: SetRotation(g.rotate + 90); break;
     case H_FULLSCREEN: ToggleFullscreen(); break;
     case H_MIN: case H_MAX: case H_CLOSE: case H_EXITFS:
         g.pressed = h;
@@ -2047,7 +2080,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_UP: SetVolume(g.volume + 5); break;
         case VK_DOWN: SetVolume(g.volume - 5); break;
         case 'M': ToggleMute(); break;
-        case 'R': CycleRepeat(); break;
+        case 'R':
+            if (ctrl) SetRotation(g.rotate + (shift ? -90 : 90));
+            else CycleRepeat();
+            break;
         case 'F': case VK_F11: ToggleFullscreen(); break;
         case VK_RETURN: if (msg == WM_SYSKEYDOWN || !ctrl) ToggleFullscreen(); break;
         case VK_ESCAPE: if (g.fullscreen) ToggleFullscreen(); break;
