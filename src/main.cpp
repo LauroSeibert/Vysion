@@ -1151,11 +1151,11 @@ static void DrawBottomIcons(Graphics& gr, const Layout& L, int oy) {
 
     // trim (pen): highlighted while trimming
     if (g.hasFile) {
-        if (g.trimMode) FillRound(gr, SolidBrush(Color(g.hover == H_TRIM ? 70 : 50, 76, 160, 255)), (REAL)L.trim.left,
+        if (g.trimMode) FillRound(gr, SolidBrush(Color(g.hover == H_TRIM ? 150 : 115, 76, 160, 255)), (REAL)L.trim.left,
                                   (REAL)(L.trim.top - oy), (REAL)(L.trim.right - L.trim.left), (REAL)(L.trim.bottom - L.trim.top), 2 * s);
         else hoverRect(L.trim, H_TRIM);
         C(L.trim, cx, cy);
-        Color pc = g.trimMode ? kTrim : W;
+        Color pc = W;   // white on the blue tint while trimming
         if (!DrawGlyph(gr, G_EDIT, cx, cy, gs, pc)) {
             Pen pp(pc, 1.3f * s);
             pp.SetStartCap(LineCapRound); pp.SetEndCap(LineCapRound);
